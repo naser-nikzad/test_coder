@@ -1,0 +1,397 @@
+<?php
+
+/**
+* @file
+* Provides general functionality and alterations for ECC site functionality.
+*/
+
+use Drupal\node\Entity\Node;
+use Drupal\taxonomy\Entity\Term;
+
+/**
+ * Implements hook_inline_entity_form_entity_form_alter().
+ *
+ * Alter IEF forms as they are being rendered.
+ */
+function ecc_general_inline_entity_form_entity_form_alter(&$entity_form, &$form_state) {
+	$type = $entity_form['#entity_type'];
+	$bundle = $entity_form['#bundle'];
+
+	// Check the entity type and bundle to determine whether a alter callback
+	// should be called.
+	if ($type == 'delay' && $bundle == 'project_delay') {
+		// Adjust the number field step for the delay amount field.
+		_ecc_geneneral_adjust_number_field_step($entity_form);
+	}
+	elseif ($type == 'task' && $bundle == 'building_tasks') {
+		// Alter the field_percent_complete field to be a range slider.
+		_ecc_general_initialize_range_slider_field($entity_form);
+	}
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Alter Building Form create form to load range_slider dependency.
+ */
+function ecc_general_form_node_project_form_alter(&$form, $form_state) {
+  // Adjust the number field step for the delay amount field.
+  $form['#attached']['library'][] = 'ecc_general/ecc_scripts';
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Alter building task create form to load range_slider dependency.
+ */
+function ecc_general_form_task_building_tasks_form_alter(&$form, $form_state) {
+	// Alter the field_percent_complete field to be a range slider.
+	_ecc_general_initialize_range_slider_field($form);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Alter Building Task edit form.
+ */
+function ecc_general_form_task_building_tasks_edit_form_alter(&$form, $form_state) {
+	// Alter the field_percent_complete field to be a range slider.
+	_ecc_general_initialize_range_slider_field($form);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Alter Project Delay create form.
+ */
+function ecc_general_form_delay_project_delay_form_alter(&$form, $form_state) {
+	// Adjust the number field step for the delay amount field.
+	_ecc_geneneral_adjust_number_field_step($form);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Alter Project Delay edit form.
+ */
+function ecc_general_form_delay_project_delay_edit_form_alter(&$form, $form_state) {
+	// Adjust the number field step for the delay amount field.
+	_ecc_geneneral_adjust_number_field_step($form);
+}
+
+/**
+ * Implements hook_token_info().
+ */
+function ecc_general_token_info() {
+	$type = [
+	  'name' => t('Parent Entity'),
+	  'description' => t('Tokens for referencing parent entity.'),
+	];
+
+	$tokens['parent_title'] = [
+	  'name' => t("Parent Title"),
+	  //'dynamic'=>TRUE,
+	  'description' => t('The parent entity title'),
+	];
+
+	return [
+	  'types' => ['ecc_general' => $type],
+	  'tokens' => ['ecc_general' => $tokens],
+	];
+}
+
+/**
+ * Implements hook_tokens().
+ */
+function ecc_general_tokens($type, $tokens, array $data, array $options, \Drupal\Core\Render\BubbleableMetadata $bubbleable_metadata) {
+
+  $replacements = [];
+  // Check for the custom ecc_general token type.
+  if ($type == 'ecc_general') {
+
+  	// Attempt to load the mapping for this entity.
+  	$mapping = _ecc_general_token_is_mapped($data);
+
+  	// If the token was loaded successfully, then replace it.
+  	if (!empty($mapping)) {
+	    foreach ($tokens as $name => $original) {
+	      // Handle different tokens differently.
+	      switch ($name) {
+	        case 'parent_title':
+	        	// Get the title from the mapping and add it as a replacement.
+	        	$title = _ecc_general_get_parent_entity_title($mapping, $data);
+	        	if (!empty($title)) {
+	          	$replacements[$original] = $title;
+
+	        	}
+	        	break;
+	      }
+	  	}
+    }
+  }
+
+  return $replacements;
+}
+
+/**
+ * Callback function to adjust the field_percent_complete field to be a range
+ * slider.
+ */
+function _ecc_general_initialize_range_slider_field(&$form) {
+
+	// Get this field value in the edit form
+	$edit_val = $form['field_percent_complete']['widget'][0]['value']['#default_value'];
+
+	$form['field_percent_complete']['widget'][0]['value'] = [
+		'#type' => 'range_slider',
+		'#title' => t('Percent Completed'),
+		'#min' => 0,
+		'#max' => 100,
+		'#step' => 5,
+		'#default_value' => (isset($edit_val))? $edit_val : 0 ,
+		'#output' => 'above',
+	];
+}
+
+/**
+ * Callback function to adjust the step value for the field_delay_amount field.
+ */
+function _ecc_geneneral_adjust_number_field_step(&$form) {
+	$form['field_delay_amount']['widget'][0]['value']['#step'] = '0.5';
+}
+
+/**
+ * Helper function to return token mappings for child entities.
+ */
+function _ecc_general_child_entities() {
+	$mapping = [
+		'delay' => [
+			'delay' => 'field_project_delays',
+		],
+		'project_details' => [
+			'colors' => 'field_colors',
+			'daily_journal' => 'field_daily_journal',
+			'fall_protection' => 'field_fall_protection_plan',
+			'materials' => 'field_materials',
+			'safety_analysis' => 'field_job_safety_analysis',
+			'subcontractor_pricing' => 'field_subcontractor_pricing',
+		],
+	];
+
+	return $mapping;
+}
+
+/**
+ * Returns the map for the entity if there is one.
+ */
+function _ecc_general_token_is_mapped($data) {
+	// Load the full mapping.
+	$map = _ecc_general_child_entities();
+
+	// Check data for an intersection with the mapping.
+	foreach ($data as $key => $value) {
+		if (!empty($map[$key])) {
+			// If a map was found, see if the bundle is mapped.
+			$sub_map = $map[$key];
+
+			// Return the mapping.
+			if (!empty($sub_map[$value->bundle()])) {
+				return [$key => $sub_map[$value->bundle()]];
+			}
+		}
+	}
+	return FALSE;
+}
+
+/**
+ * Helper function to convert a mapping into an entity title.
+ */
+function _ecc_general_get_parent_entity_title($mapping, $data) {
+
+	// Allow for multiple mappings, although only one will be used.
+	foreach ($mapping as $key => $field_id) {
+		$entity = $data[$key];
+		$id = $entity->id();
+
+		// Make sure the entity and ID are valid.
+		if (!empty($id)) {
+
+			// Perform an entity query to load the entity referencing this one
+			// through the field specified in our mapping.
+			$query = Drupal::service('entity.query')
+	    	->get('node')
+	    	->condition($field_id, $id);
+	 		$entity_ids = $query->execute();
+
+	 		// Only grab one entity ID.
+	 		if (!empty($entity_ids)) {
+	 			$parent_id = reset($entity_ids);
+	 			break;
+	 		}
+		}
+	}
+
+	// If an entity ID was found, then attempt to load it.
+	if (!empty($parent_id)) {
+		$parent = Node::load($parent_id);
+		// Get the parent's title and return it as the replacement value.
+		if (!empty($parent)) {
+			return $parent->getTitle();
+		}
+	}
+	return FALSE;
+}
+
+/**
+ * Hook to access the user to use the filter by region
+ */
+function ecc_general_form_views_exposed_form_alter(&$form, &$form_state, $form_id) {
+  // get current user permission
+  $user = \Drupal::currentUser();
+  // Load all employee contacts
+  if ($user->id() > 1) {
+    $employee_contacts = \Drupal::entityTypeManager()->getStorage('contact')->loadByProperties(['type' => 'employee']);
+    $regionValue = array();
+    // create an array according to curent user regions
+    foreach ($employee_contacts as $key => $contact) {
+      foreach ($contact->get('field_user')->getValue() as $key => $value) {
+        if ($user->id() == $value['target_id']) {
+          // get the term of regions for this user
+          foreach ($contact->get('field_regions')->getValue() as $key => $userTerm) {
+            // get all terms data that this user has
+            $term = Term::load($userTerm['target_id']);
+            array_push($regionValue, array( $term->tid->value => $term->name->value ));
+          }
+        }
+      }
+    }
+    // search in the select options
+    if (count($regionValue) > 1) {
+      foreach ($form['field_regions_target_id']['#options'] as $key => $value) {
+        $thisRegionValid  = false;
+        if ($value->option) {
+          foreach ($regionValue as $region) {
+                // check the option if not exist in the curent user regions
+              if ($value->option == $region) {
+                  $thisRegionValid = true;
+               }
+            }
+          // remove  current region if this user is invalid
+          if (!$thisRegionValid) {
+            unset($form['field_regions_target_id']['#options'][$key]);
+          }
+        }
+      }
+    }else{
+      // remove region section if it has just on region
+      $form['field_regions_target_id']['#access'] = false;
+    }
+  }
+}
+/**
+ * hook on add contact and check that if it was client then create the client folder for new client
+ */
+function ecc_general_contact_insert(Drupal\Core\Entity\EntityInterface $entity) {
+  // check that the current boundle is cleint
+  if ($entity->bundle() == 'client') {
+	// Generate the client name
+	$clientName = strtolower(str_replace(" ","_",$entity->get('title')->getValue()[0]['value']));
+    // create the client path to create
+    $clientPath = 'C:/Users/Dell/pomtech Dropbox/Executive Coatings/Apps/ExecutiveCoatings/Clients/inactive_clients/' . $clientName;
+    mkdir($clientPath, $mode = 0777, $recursive = true);
+
+    $clientPath = 'C:/Users/Dell/pomtech Dropbox/Executive Coatings/Apps/ExecutiveCoatings/Clients/inactive_clients/'. $clientName.'/Estimates';
+    mkdir($clientPath, $mode = 0777, $recursive = true);
+
+    $clientPath = 'C:/Users/Dell/pomtech Dropbox/Executive Coatings/Apps/ExecutiveCoatings/Clients/inactive_clients/'. $clientName.'/Projects';
+    mkdir($clientPath, $mode = 0777, $recursive = true);
+    
+  }
+}
+/**
+ * move client direcotry and files form inactive path to active directory
+ */
+function ecc_general_node_insert(Node $node) {
+
+  $client_id = $node->get('field_client')->getValue()[0]['target_id'];
+  // $node2 = Node::load($client_id);
+  dpm($client_id);
+	// dpm($node->get('title'));
+  $projectName = $node->get('title')->getValue()[0]['value'];
+  if ($node->get('field_project_status')->getValue()[0]['value'] == 'Active') {
+    $clientPath = changeClientDir($node , 'inactive_clients' , 'active_clients');  
+    projectDir($projectName , $clientPath);
+  }else{
+  	$clientPath =changeClientDir($node , 'active_clients' , 'inactive_clients' );
+    projectDir($projectName , $clientPath);
+  }
+}
+function ecc_general_node_update(Node $node) {
+  $projectName = $node->get('title')->getValue()[0]['value'];
+  if ($node->get('field_project_status')->getValue()[0]['value'] == 'Active') {
+    $clientPath = changeClientDir($node , 'inactive_clients' , 'active_clients');
+    projectDir($projectName , $clientPath);  
+  }else{
+  	$clientPath = changeClientDir($node , 'active_clients' , 'inactive_clients' );
+  	projectDir($projectName , $clientPath);
+  }
+}
+/**
+ * this function will get the main client path and also the proejct name
+ * @param  [type] $projectName the project name should be assign to function, it will use in the prject path
+ * @param  [type] $clientPath  the related cleint path will be used and the base path and the project path will add to this path
+ */
+function projectDir($projectName , $clientPath){
+  $projectPath = $clientPath . "/Projects/" . $projectName;
+  mkdir($projectPath, $mode = 0777, $recursive = true);
+}
+/**
+ * Function to get the current client and client path active and inactive files and move form inactive ot active
+ * @param  [type] $node            This is the node that will be used
+ * @param  [type] $oldClientStatus get the old client status to use it in the path of client
+ * @param  [type] $newClientStatus get the new client status to use it in the path of client
+ */
+function changeClientDir($node , $oldClientStatus , $newClientStatus){
+	// find the data of cleint of project
+  $clientContact = \Drupal::entityManager()->getStorage('contact')->load($node->field_client->target_id);
+  // generate the client name with out space
+  $clientName = strtolower(str_replace(" ","_",$clientContact->get('title')->getValue()[0]['value']));
+  // find the docroot path 
+  $docrootPath = dirname(dirname(dirname(dirname(__FILE__))));
+  // generate to path for the client old and new path
+  $oldClientPath = $docrootPath . '/sites/default/files/Dropbox/clients/' . $oldClientStatus . '/' . $clientName;
+  $newClientPath = $docrootPath . '/sites/default/files/Dropbox/clients/' . $newClientStatus . '/' . $clientName;
+  copyOldDirToNew($oldClientPath , $newClientPath);
+  return $newClientPath;
+}
+/**
+ * Function to remove folders and files Source https://stackoverflow.com/a/9835609/9246297
+ * @param  [type] $dir This will be the directory that will be deleted
+ */
+function removeOldDir($dir) {
+  if (is_dir($dir)) {
+    $files = scandir($dir);
+    foreach ($files as $file)
+      if ($file != "." && $file != "..") removeOldDir("$dir/$file");
+        rmdir($dir);
+      }
+   else if (file_exists($dir)) unlink($dir);
+}
+/**
+ * Function to Copy folders and files
+ * @param  [type] $src The source path of directory
+ * @param  [type] $dst the destination path that the source filse should move to them
+ */
+function copyOldDirToNew($src, $dst) {
+  if (file_exists ( $dst ))
+    removeOldDir ( $src );
+    if (is_dir ( $src )) {
+      mkdir ( $dst );
+      $files = scandir ( $src );
+      foreach ( $files as $file )
+        if ($file != "." && $file != "..")
+          copyOldDirToNew ( "$src/$file", "$dst/$file" );
+        } else if (file_exists ( $src ))
+            copy ( $src, $dst );
+    removeOldDir ( $src );
+}
